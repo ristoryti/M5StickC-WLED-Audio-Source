@@ -221,6 +221,7 @@ IPAddress broadcastIP(192, 168, 1, 100);
 ## Advanced Configuration
 
 Issues:
-- It's not working
-- The frequency bar is not showing
+- The frequency bar is still not showing properly. Gets cut out from the right and the bottom. gain bar is also cutting a bit out from the right. 
+- Too much noise in the signal. Lvl bar is barely showing anything but lots of movement in the lights.
+- The battery is not working, maybe an issue with my unit?
 - The screen is flickering, help from here? [link](https://community.m5stack.com/topic/2409/avoid-lcd-flicker-when-updating-text-on-m5stickc)

@@ -8,7 +8,7 @@ The code has been fully generated with Claude AI and has been tested for bugs.
 
 **Automatic Gain Control (AGC)** - Automatically adapts to room volume  
 **Built-in Microphone** - Uses M5StickC Plus internal SPM1423 PDM mic  
-**WiFi Configuration Portal** - Easy setup like WLED (no code editing needed)  
+**WiFi Configuration Portal** - Input wifi credentials in browser
 **Real-time Display** - Audio levels and frequency spectrum visualization  
 **Manual Controls** - Adjust gain, brightness, and transmission on/off  
 

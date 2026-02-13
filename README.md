@@ -1,20 +1,21 @@
-# M5StickC Plus - WLED Audio Sync Source
+# M5StickC - WLED Audio Sync Source
 
-This firmware for M5StickC Plus (version 1) uses the built-in SPM1423 PDM microphone to capture audio and sends it to WLED-enabled ESP devices via UDP for synchronized audio-reactive lighting effects.
+This firmware for M5StickC uses the built-in SPM1423 PDM microphone to capture audio and sends it to WLED-enabled ESP devices via UDP for synchronized audio-reactive lighting effects.  
+This firmware is built for the original M5StickC, and has not been tested with M5StickC Plus nor Plus v2
 
 The code has been fully generated with Claude AI and has been tested for bugs.
 
 ## Features
 
 **Automatic Gain Control (AGC)** - Automatically adapts to room volume  
-**Built-in Microphone** - Uses M5StickC Plus internal SPM1423 PDM mic  
+**Built-in Microphone** - Uses M5StickC internal SPM1423 PDM mic  
 **WiFi Configuration Portal** - Input wifi credentials in browser
 **Real-time Display** - Audio levels and frequency spectrum visualization  
 **Manual Controls** - Adjust gain, brightness, and transmission on/off  
 
 ## Requirements
 
-- **M5StickC Plus** 
+- **M5StickC ** 
 - **WLED Device** 
 - **WiFi Network** - 2.4GHz 
 
@@ -35,12 +36,12 @@ The code has been fully generated with Claude AI and has been tested for bugs.
    - Click **"New Sketch"**
    - Delete any default code
 
-8. **Connect M5StickC Plus**
+8. **Connect M5StickC**
    - Connect via USB-C cable
    - Select board: ESP32 Dev Module
 
 7. **Copy the Firmware**
-   - Copy the entire contents of `M5StickCPlus_WLED_Audio.ino`
+   - Copy the entire contents of `M5StickC_WLED_Audio.ino`
    - Paste into the editor
 
 10. **Upload**
@@ -102,7 +103,7 @@ This firmware can also be installed using ArduinoIDE or PlatformIO
 
 ### 3. Test Audio Sync
 
-1. Play music near the M5StickC Plus
+1. Play music near the M5StickC
 2. Watch the M5Stick display - audio levels should move
 3. In WLED, go to **Info** tab
 4. Look for "Audio source" showing the M5Stick's IP
@@ -159,7 +160,7 @@ The blue vertical line on the signal bar shows the AGC target level (180/255).
 
 ### WiFi Connection Failed
 
-- M5StickC Plus only supports **2.4GHz WiFi** (not 5GHz)
+- M5StickC only supports **2.4GHz WiFi** (not 5GHz)
 - Double-check password (case-sensitive)
 - Hold Button A for 2 seconds to reset WiFi and try again
 - Try connecting to a simpler network (no special characters)

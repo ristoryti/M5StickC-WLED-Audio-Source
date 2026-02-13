@@ -71,6 +71,7 @@ This firmware can also be installed using ArduinoIDE or PlatformIO
   - **SSID**: Your WiFi network name
   - **Password**: Your WiFi password
 - Click **"Connect"**
+- The device will show CONNECTED text for two seconds if successful
 
 ### 4. M5Stick Restarts
 
@@ -92,9 +93,9 @@ This firmware can also be installed using ArduinoIDE or PlatformIO
 ### 2. Configure WLED to Receive Audio
 
 1. Open WLED web interface (http://[your-wled-ip])
-2. Go to **Settings** → **Sound Settings**
-3. Set **Sync mode** to **"Receive"**
-4. Ensure **UDP Sound Sync** is enabled
+2. Go to **Settings** → **Usermods**
+3. Set Audioreactive to **"Enable"**
+4. In the sync section in the bottom of the page, set mode to **receive**
 5. Port should be **11988** (default)
 6. Click **Save**
 7. **Power cycle** the WLED device (important!)
@@ -216,3 +217,10 @@ IPAddress broadcastIP(255, 255, 255, 255);
 // To your WLED device IP:
 IPAddress broadcastIP(192, 168, 1, 100);
 ```
+
+## Advanced Configuration
+
+Issues:
+- It's not working
+- The frequency bar is not showing
+- The screen is flickering, help from here? [link](https://community.m5stack.com/topic/2409/avoid-lcd-flicker-when-updating-text-on-m5stickc)

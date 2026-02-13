@@ -9,7 +9,6 @@ The code has been fully generated with Claude AI and has been tested for bugs.
 **Automatic Gain Control (AGC)** - Automatically adapts to room volume  
 **Built-in Microphone** - Uses M5StickC Plus internal SPM1423 PDM mic  
 **WiFi Configuration Portal** - Easy setup like WLED (no code editing needed)  
-**Battery Powered** - Portable wireless audio source  
 **Real-time Display** - Audio levels and frequency spectrum visualization  
 **Manual Controls** - Adjust gain, brightness, and transmission on/off  
 
@@ -54,6 +53,10 @@ The code has been fully generated with Claude AI and has been tested for bugs.
 This firmware can also be installed using ArduinoIDE or PlatformIO
 
 ## First Time Setup
+
+### 1. Powering up
+- Replug the USB C cable to power up
+- Note that the buttons and audio levels are not responsive before connecting to an external network
 
 ### 2. Connect to Hotspot
 
@@ -145,7 +148,6 @@ The blue vertical line on the signal bar shows the AGC target level (180/255).
 - 🔴 **Red bar** (200-255): Too loud, may clip
 
 ## Troubleshooting
-
 
 ### Can't Connect to WLED
 

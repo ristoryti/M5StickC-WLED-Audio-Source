@@ -58,6 +58,7 @@ unsigned long buttonHoldTime = 0;
 // Audio buffers
 int16_t samples[SAMPLES];
 uint8_t fftResult[16];
+uint8_t fftResultSmooth[16] = {0}; // Smoothed FFT for display
 uint8_t samplePeak = 0;
 
 // AGC variables
@@ -66,20 +67,21 @@ float smoothedLevel = 0.0;
 float peakLevel = 0.0;
 unsigned long agcUpdateTimer = 0;
 
-const float gainPresets[] = {10.0, 20.0, 30.0, 50.0, 80.0, 120.0};
-int currentGainIndex = 2;
-uint8_t brightness = 15; // Backlight brightness (0-15)
+const float gainPresets[] = {20.0, 40.0, 60.0, 80.0, 100.0, 120.0, 140.0, 160.0, 180.0, 200.0};
+int currentGainIndex = 2;  // Start at 60
+uint8_t brightness = 15; // Backlight brightness (0-15) - changed to 15
 
 // ============ WLED AUDIO SYNC PACKET ============
+// V2 Format for WLED 0.14.0+ (MoonModules)
 struct AudioSyncPacket {
-    uint8_t header[2] = {'A', 'U'};
-    uint8_t version = 2;
-    uint8_t sampleRaw;
-    uint8_t sampleSmth;
-    uint8_t samplePeak;
-    uint8_t reserved1 = 0;
-    uint8_t fftResult[16];
-    uint8_t reserved2[8] = {0};
+    char header[6] = "00002";        // V2 header (not 'A','U'!)
+    float sampleRaw;                 // 4 bytes - raw sample
+    float sampleSmth;                // 4 bytes - smoothed sample  
+    uint8_t samplePeak;              // 1 byte - peak detection
+    uint8_t reserved1 = 0;           // 1 byte - reserved
+    uint8_t fftResult[16];           // 16 bytes - FFT results
+    float FFT_Magnitude;             // 4 bytes - FFT magnitude
+    float FFT_MajorPeak;             // 4 bytes - FFT major peak
 };
 
 // ============ HTML (same as before) ============
@@ -142,7 +144,7 @@ const char success_html[] PROGMEM = R"rawliteral(
 </head>
 <body>
     <div class="container">
-        <h1>✓ Settings Saved!</h1>
+        <h1>Settings Saved!</h1>
         <div class="spinner"></div>
         <div class="info">
             M5Stick is connecting to your WiFi...<br><br>
@@ -191,7 +193,12 @@ void setup() {
     // Proper power management for M5StickC Plus
     M5.Axp.SetLDO2(true);          // Enable backlight power
     M5.Axp.SetLDO3(true);          // Enable display power
-    M5.Axp.ScreenBreath(15);       // Set backlight brightness (0-15)
+    M5.Axp.ScreenBreath(15);       // Set backlight brightness to max (0-15)
+    
+    // Battery charging is handled automatically by AXP192
+    // When USB is connected: charges battery + powers device
+    // When USB disconnected: runs from battery
+    // No additional code needed for battery operation
     
     M5.Lcd.setRotation(1);
     M5.Lcd.fillScreen(TFT_BLACK);
@@ -320,11 +327,11 @@ void loop() {
         return;
     }
     
-    // WiFi reset (hold Button A for 2 seconds)
+    // WiFi reset (hold Button A for 4 seconds)
     if (M5.BtnA.isPressed()) {
         if (buttonHoldTime == 0) {
             buttonHoldTime = millis();
-        } else if (millis() - buttonHoldTime > 4000) {
+        } else if (millis() - buttonHoldTime > 4000) {  // Changed from 2000 to 4000
             preferences.begin("audio-sync", false);
             preferences.clear();
             preferences.end();
@@ -346,11 +353,15 @@ void loop() {
     
     if (M5.BtnB.wasPressed()) {
         if (agcEnabled) {
+            // AGC ON -> switch to manual mode at first preset (20)
             agcEnabled = false;
+            currentGainIndex = 0;
             currentGain = gainPresets[currentGainIndex];
         } else {
+            // Cycle through manual gains: 20, 40, 60, 80, 100, 120, 140, 160, 180, 200, then back to AGC
             currentGainIndex++;
             if (currentGainIndex >= sizeof(gainPresets) / sizeof(gainPresets[0])) {
+                // After 200, go back to AGC
                 currentGainIndex = 0;
                 agcEnabled = true;
             } else {
@@ -469,11 +480,28 @@ void calculateFrequencyBins() {
     
     for (int bin = 0; bin < 16; bin++) {
         int32_t binSum = 0;
+        int32_t binMax = 0;
+        
         for (int i = 0; i < binSize; i++) {
             int idx = bin * binSize + i;
-            binSum += abs(samples[idx]);
+            int16_t val = abs(samples[idx]);
+            binSum += val;
+            if (val > binMax) binMax = val;
         }
-        fftResult[bin] = constrain(binSum / binSize / 128, 0, 255);
+        
+        // Use peak value primarily for better visualization
+        // Samples are 16-bit signed, so max value is ~32767
+        // Scale down by dividing by 64 to get 0-511 range, then clamp to 255
+        int32_t binValue = binMax / 64;
+        
+        fftResult[bin] = constrain(binValue, 0, 255);
+        
+        // Smooth for display (fast attack, slow decay)
+        if (fftResult[bin] > fftResultSmooth[bin]) {
+            fftResultSmooth[bin] = fftResult[bin]; // Fast attack
+        } else {
+            fftResultSmooth[bin] = (fftResultSmooth[bin] * 7 + fftResult[bin]) / 8; // Slow decay
+        }
     }
 }
 
@@ -491,12 +519,29 @@ void sendAudioSync() {
         smoothSum += smoothBuffer[i];
     }
     
-    packet.sampleRaw = samplePeak;
-    packet.sampleSmth = smoothSum / 4;
+    // Convert to float format for V2 protocol
+    packet.sampleRaw = (float)samplePeak;
+    packet.sampleSmth = (float)(smoothSum / 4);
     packet.samplePeak = samplePeak;
     
+    // Copy FFT results
     memcpy(packet.fftResult, fftResult, 16);
     
+    // Calculate FFT magnitude and major peak
+    packet.FFT_Magnitude = 0.0;
+    packet.FFT_MajorPeak = 0.0;
+    uint8_t maxBin = 0;
+    
+    for (int i = 0; i < 16; i++) {
+        if (fftResult[i] > maxBin) {
+            maxBin = fftResult[i];
+            packet.FFT_MajorPeak = i * (SAMPLE_RATE / 2.0 / 16.0); // Approximate frequency
+        }
+        packet.FFT_Magnitude += fftResult[i];
+    }
+    packet.FFT_Magnitude /= 16.0; // Average magnitude
+    
+    // Send packet
     udp.beginPacket(broadcastIP, audioSyncPort);
     udp.write((uint8_t*)&packet, sizeof(packet));
     udp.endPacket();
@@ -507,57 +552,64 @@ void sendAudioSync() {
 // ============ DISPLAY UPDATE ============
 void updateDisplay() {
     M5.Lcd.fillScreen(TFT_BLACK);
-    M5.Lcd.setTextSize(2);
+    M5.Lcd.setTextSize(1);
     M5.Lcd.setCursor(0, 0);
     M5.Lcd.setTextColor(transmitting ? TFT_GREEN : TFT_RED);
-    M5.Lcd.println(transmitting ? "TX ON" : "PAUSED");
+    M5.Lcd.print(transmitting ? "TX" : "OFF");
     
     M5.Lcd.setTextColor(TFT_WHITE);
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.printf("IP: %s\n", WiFi.localIP().toString().c_str());
-    M5.Lcd.println("Mic: PDM SPM1423");
+    M5.Lcd.print(" ");
+    M5.Lcd.println(WiFi.localIP().toString().c_str());
     
     if (agcEnabled) {
         M5.Lcd.setTextColor(TFT_GREEN);
-        M5.Lcd.printf("AGC: ON (%.1fx)\n", currentGain);
-        M5.Lcd.setTextColor(TFT_WHITE);
-        M5.Lcd.printf("Lvl: %.0f/%.0f\n", smoothedLevel, (float)AGC_TARGET_LEVEL);
+        M5.Lcd.printf("AGC:%.0fx ", currentGain);
     } else {
         M5.Lcd.setTextColor(TFT_YELLOW);
-        M5.Lcd.printf("MANUAL: %.0fx\n", currentGain);
-        M5.Lcd.setTextColor(TFT_WHITE);
+        M5.Lcd.printf("MAN:%.0fx ", currentGain);
     }
     
-    M5.Lcd.printf("Pkts: %lu\n", packetCount);
+    M5.Lcd.setTextColor(TFT_WHITE);
+    M5.Lcd.printf("Pkt:%lu\n", packetCount);
     
-    // Audio level bar
-    M5.Lcd.setCursor(0, 65);
-    M5.Lcd.println("Signal:");
-    int barWidth = (samplePeak * 120) / 255;
+    // Audio level bar - moved up, starts at y=25
+    M5.Lcd.setCursor(0, 20);
+    M5.Lcd.println("Lvl:");
+    int barWidth = (samplePeak * 235) / 255;
     
     uint16_t barColor;
     if (samplePeak < 85) barColor = TFT_GREEN;
     else if (samplePeak < 200) barColor = TFT_YELLOW;
     else barColor = TFT_RED;
     
-    M5.Lcd.fillRect(0, 75, barWidth, 10, barColor);
-    M5.Lcd.drawRect(0, 75, 120, 10, TFT_WHITE);
+    M5.Lcd.fillRect(0, 28, barWidth, 8, barColor);
+    M5.Lcd.drawRect(0, 28, 235, 8, TFT_WHITE);
     
     if (agcEnabled) {
-        int targetX = (AGC_TARGET_LEVEL * 120) / 255;
-        M5.Lcd.drawFastVLine(targetX, 73, 14, TFT_BLUE);
+        int targetX = (AGC_TARGET_LEVEL * 235) / 255;
+        M5.Lcd.drawFastVLine(targetX, 27, 10, TFT_BLUE);
     }
     
-    // Frequency visualization
-    M5.Lcd.setCursor(0, 90);
+    // Frequency visualization - moved up, starts at y=40
+    M5.Lcd.setCursor(0, 38);
     M5.Lcd.println("Freq:");
+    
+    // Draw area for freq bars: y=48 to y=132 (84 pixels tall)
+    M5.Lcd.drawRect(0, 48, 239, 84, TFT_RED);
+    
+    // Draw frequency bars
     for (int i = 0; i < 16; i++) {
-        int barHeight = (fftResult[i] * 20) / 255;
-        int x = i * 7;
-        M5.Lcd.fillRect(x, 115 - barHeight, 6, barHeight, TFT_CYAN);
+        // Boost the values significantly - multiply by 10 for visibility
+        int boostedValue = min(255, fftResultSmooth[i] * 10);
+        int barHeight = (boostedValue * 80) / 255;  // Max 80 pixels tall
+        int x = 1 + (i * 15);
+        
+        // Draw from y=131 upward (more room now)
+        if (barHeight > 2) {
+            M5.Lcd.fillRect(x, 131 - barHeight, 13, barHeight, TFT_CYAN);
+        }
     }
     
-    M5.Lcd.setCursor(0, 120);
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.println("A:TX B:AGC HoldB:Bri");
+    // Draw baseline at bottom
+    M5.Lcd.drawFastHLine(0, 131, 240, TFT_WHITE);
 }

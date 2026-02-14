@@ -175,7 +175,6 @@ The blue vertical line on the signal bar shows the AGC target level (180/255).
 - **Frequency Bins**: 16 (for WLED spectrum effects)
 - **UDP Port**: 11988 (WLED default)
 - **Protocol**: WLED Audio Sync v2
-- **Latency**: 15-25ms typical
 - **Range**: Standard WiFi range
 - **Supported WLED**: Unlimited receivers simultaneously
 

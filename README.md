@@ -12,6 +12,7 @@ The code has been fully generated with Claude AI and has been tested for bugs.
 **WiFi Configuration Portal** - Input wifi credentials in browser
 **Real-time Display** - Audio levels and frequency spectrum visualization  
 **Manual Controls** - Adjust gain, brightness, and transmission on/off  
+**WebUI** - Fine gain control and gain presets, accessible by typing the ip of the device to a web browser  
 
 ## Requirements
 
@@ -149,6 +150,11 @@ The blue vertical line on the signal bar shows the AGC target level (180/255).
 - 🟡 **Yellow bar** (85-200): Optimal range
 - 🔴 **Red bar** (200-255): Too loud, may clip
 
+### Web UI
+
+- Navigate to the ip address of your device. The ip is shown on startup and the last digits of the ip is also shown while the audio is running (example: 192.168.8.138)
+- The web UI has control slider for gain, the gain and EQ display and also three presets for gain settings
+
 ## Troubleshooting
 
 ### Can't Connect to WLED
@@ -234,5 +240,7 @@ IPAddress broadcastIP(192, 168, 1, 100);
 ## Advanced Configuration
 
 Issues:
+- WebUI Guide is missing from the readme
+- 150ms of latency is not ideal
+- The visual eq has som issues on higher frequencies, I tried to fix these but some wrong frequencies are still displayed
 - The battery is not working, maybe an issue with my unit?
-- The screen is flickering, help from here? [link](https://community.m5stack.com/topic/2409/avoid-lcd-flicker-when-updating-text-on-m5stickc)

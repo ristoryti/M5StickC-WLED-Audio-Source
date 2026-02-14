@@ -194,6 +194,16 @@ Edit these values in the code for different scenarios:
 #define AGC_DECAY_RATE 0.001    // How fast gain decreases
 ```
 
+### Adjusting Signal to noise ratio
+
+If there is noise in the signal (lights are reacting when there is no sound), edit this line:
+
+```cpp
+#define SQUELCH 50
+```
+Higher = more agressive filtering
+
+
 **Presets:**
 - **Live Music**: Target 200, Attack 0.1, Decay 0.005
 - **Ambient/Background**: Target 160, Attack 0.03, Decay 0.001
@@ -222,7 +232,5 @@ IPAddress broadcastIP(192, 168, 1, 100);
 ## Advanced Configuration
 
 Issues:
-- The UI is scaled for the wrong model. This is using a smaller display
-- Too much noise in the signal. Lvl bar is barely showing anything but lots of movement in the lights.
 - The battery is not working, maybe an issue with my unit?
 - The screen is flickering, help from here? [link](https://community.m5stack.com/topic/2409/avoid-lcd-flicker-when-updating-text-on-m5stickc)

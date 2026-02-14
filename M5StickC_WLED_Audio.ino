@@ -29,7 +29,7 @@ const uint16_t audioSyncPort = 11988;
 // Audio settings
 #define SAMPLE_RATE 16000  // PDM mic works best at 16kHz
 #define SAMPLES 512
-#define SQUELCH 10
+#define SQUELCH 50         // Increased to filter noise - adjust higher if still noisy
 
 // AGC Settings
 #define AGC_ENABLED_DEFAULT true
@@ -445,7 +445,14 @@ void processAudioWithAGC() {
     }
     
     int16_t amplitude = rawAmplitude * currentGain / 10.0;
-    if (amplitude < SQUELCH) amplitude = 0;
+    
+    // Apply squelch/noise gate
+    if (amplitude < SQUELCH) {
+        amplitude = 0;
+    } else {
+        // Subtract noise floor
+        amplitude -= SQUELCH;
+    }
     
     samplePeak = constrain(amplitude / 128, 0, 255);
     
@@ -490,9 +497,15 @@ void calculateFrequencyBins() {
         }
         
         // Use peak value primarily for better visualization
-        // Samples are 16-bit signed, so max value is ~32767
-        // Scale down by dividing by 64 to get 0-511 range, then clamp to 255
         int32_t binValue = binMax / 64;
+        
+        // Apply noise gate - values below SQUELCH are zeroed
+        if (binValue < SQUELCH / 2) {
+            binValue = 0;
+        } else {
+            // Subtract noise floor from signal
+            binValue -= (SQUELCH / 2);
+        }
         
         fftResult[bin] = constrain(binValue, 0, 255);
         
@@ -551,65 +564,81 @@ void sendAudioSync() {
 
 // ============ DISPLAY UPDATE ============
 void updateDisplay() {
+    // M5StickC (original) display: 80 pixels wide x 160 pixels tall in rotation 1
     M5.Lcd.fillScreen(TFT_BLACK);
     M5.Lcd.setTextSize(1);
     M5.Lcd.setCursor(0, 0);
+    
+    // Line 1: Status
     M5.Lcd.setTextColor(transmitting ? TFT_GREEN : TFT_RED);
-    M5.Lcd.print(transmitting ? "TX" : "OFF");
+    M5.Lcd.println(transmitting ? "TX" : "OFF");
     
+    // Line 2: IP (abbreviated)
     M5.Lcd.setTextColor(TFT_WHITE);
-    M5.Lcd.print(" ");
-    M5.Lcd.println(WiFi.localIP().toString().c_str());
+    String ip = WiFi.localIP().toString();
+    // Show last octet only to save space
+    int lastDot = ip.lastIndexOf('.');
+    M5.Lcd.print(".");
+    M5.Lcd.println(ip.substring(lastDot + 1));
     
+    // Line 3: Gain
     if (agcEnabled) {
         M5.Lcd.setTextColor(TFT_GREEN);
-        M5.Lcd.printf("AGC:%.0fx ", currentGain);
+        M5.Lcd.printf("AGC %.0f\n", currentGain);
     } else {
         M5.Lcd.setTextColor(TFT_YELLOW);
-        M5.Lcd.printf("MAN:%.0fx ", currentGain);
+        M5.Lcd.printf("MAN %.0f\n", currentGain);
     }
     
+    // Line 4: Packet count (abbreviated)
     M5.Lcd.setTextColor(TFT_WHITE);
-    M5.Lcd.printf("Pkt:%lu\n", packetCount);
+    if (packetCount < 10000) {
+        M5.Lcd.printf("Pkt %lu\n", packetCount);
+    } else {
+        M5.Lcd.printf("Pkt %luk\n", packetCount / 1000);
+    }
     
-    // Audio level bar - moved up, starts at y=25
-    M5.Lcd.setCursor(0, 20);
-    M5.Lcd.println("Lvl:");
-    int barWidth = (samplePeak * 235) / 255;
+    // Audio level bar at y=32, compact
+    M5.Lcd.setCursor(0, 32);
+    M5.Lcd.println("Lvl");
+    int barWidth = (samplePeak * 78) / 255;  // 78 pixels wide (80-2 for margins)
     
     uint16_t barColor;
     if (samplePeak < 85) barColor = TFT_GREEN;
     else if (samplePeak < 200) barColor = TFT_YELLOW;
     else barColor = TFT_RED;
     
-    M5.Lcd.fillRect(0, 28, barWidth, 8, barColor);
-    M5.Lcd.drawRect(0, 28, 235, 8, TFT_WHITE);
+    M5.Lcd.fillRect(1, 42, barWidth, 6, barColor);
+    M5.Lcd.drawRect(1, 42, 78, 6, TFT_WHITE);
     
     if (agcEnabled) {
-        int targetX = (AGC_TARGET_LEVEL * 235) / 255;
-        M5.Lcd.drawFastVLine(targetX, 27, 10, TFT_BLUE);
+        int targetX = 1 + (AGC_TARGET_LEVEL * 78) / 255;
+        M5.Lcd.drawFastVLine(targetX, 41, 8, TFT_BLUE);
     }
     
-    // Frequency visualization - moved up, starts at y=40
-    M5.Lcd.setCursor(0, 38);
-    M5.Lcd.println("Freq:");
+    // Frequency visualization at y=50
+    M5.Lcd.setCursor(0, 50);
+    M5.Lcd.println("Freq");
     
-    // Draw area for freq bars: y=48 to y=132 (84 pixels tall)
-    M5.Lcd.drawRect(0, 48, 239, 84, TFT_RED);
-    
-    // Draw frequency bars
-    for (int i = 0; i < 16; i++) {
-        // Boost the values significantly - multiply by 10 for visibility
-        int boostedValue = min(255, fftResultSmooth[i] * 10);
-        int barHeight = (boostedValue * 80) / 255;  // Max 80 pixels tall
-        int x = 1 + (i * 15);
+    // Draw 8 frequency bars (not 16, too narrow for 80px screen)
+    // Each bar is 9 pixels wide (8 bars * 10 = 80)
+    for (int i = 0; i < 8; i++) {
+        // Combine pairs of frequency bins for 8 bars instead of 16
+        int bin1 = fftResultSmooth[i * 2];
+        int bin2 = fftResultSmooth[i * 2 + 1];
+        int avgBin = (bin1 + bin2) / 2;
         
-        // Draw from y=131 upward (more room now)
+        // Boost and scale
+        int boostedValue = min(255, avgBin * 10);
+        int barHeight = (boostedValue * 95) / 255;  // Max 95 pixels tall (160 - 60 header = 100)
+        int x = i * 10;
+        
+        // Draw from y=157 upward (screen is 160 tall)
         if (barHeight > 2) {
-            M5.Lcd.fillRect(x, 131 - barHeight, 13, barHeight, TFT_CYAN);
+            M5.Lcd.fillRect(x, 157 - barHeight, 9, barHeight, TFT_CYAN);
         }
     }
     
     // Draw baseline at bottom
-    M5.Lcd.drawFastHLine(0, 131, 240, TFT_WHITE);
+    M5.Lcd.drawFastHLine(0, 157, 80, TFT_WHITE);
 }

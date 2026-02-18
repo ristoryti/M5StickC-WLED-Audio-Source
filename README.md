@@ -7,9 +7,7 @@ The code has been fully generated with Claude AI and has been tested for bugs.
 
 ## Features
 
-**Automatic Gain Control (AGC)** - Automatically adapts to room volume  
-**Built-in Microphone** - Uses M5StickC internal SPM1423 PDM mic  
-**WiFi Configuration Portal** - Input wifi credentials in browser
+**WiFi Configuration Portal** - Input wifi credentials in browser  
 **Real-time Display** - Audio levels and frequency spectrum visualization  
 **Manual Controls** - Adjust gain, brightness, and transmission on/off  
 **WebUI** - Fine gain control and gain presets, accessible by typing the ip of the device to a web browser  
@@ -117,9 +115,7 @@ This firmware can also be installed using ArduinoIDE or PlatformIO
 
 ```
 TX ON                  ← Transmission status
-IP: 192.168.1.55      ← M5Stick IP address
-Mic: PDM SPM1423      ← Microphone type
-AGC: ON (45.2x)       ← Auto gain (current multiplier)
+IP: 192.168.1.55      ← M5Stick IP address)
 Lvl: 175/180          ← Current level / Target level
 Pkts: 1234            ← Packets sent
 
@@ -189,6 +185,8 @@ The blue vertical line on the signal bar shows the AGC target level (180/255).
 
 ### Adjusting AGC Parameters
 
+Note: The AGC function and parameters haven't been tested properly
+
 Edit these values in the code for different scenarios:
 
 ```cpp
@@ -240,7 +238,7 @@ IPAddress broadcastIP(192, 168, 1, 100);
 ## Advanced Configuration
 
 Issues:
-- WebUI Guide is missing from the readme
-- 150ms of latency is not ideal
+- The display can't be used at full brightness and the brightness presets don't work
 - The visual eq has som issues on higher frequencies, I tried to fix these but some wrong frequencies are still displayed
 - The battery is not working, maybe an issue with my unit?
+- Maybe Squelch and AGC parameters could be added to webui? Maybe even sample rate changes?

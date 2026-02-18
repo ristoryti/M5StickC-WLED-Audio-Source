@@ -9,7 +9,7 @@ The code has been fully generated with Claude AI and has been tested for bugs.
 
 **WiFi Configuration Portal** - Input wifi credentials in browser  
 **Real-time Display** - Audio levels and frequency spectrum visualization  
-**Manual Controls** - Adjust gain, brightness, and transmission on/off  
+**Button Controls** - Adjust gain, brightness, and transmission on/off  
 **WebUI** - Fine gain control and gain presets, accessible by typing the ip of the device to a web browser  
 
 ## Requirements

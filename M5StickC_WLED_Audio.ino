@@ -15,6 +15,7 @@
 #include <Preferences.h>
 #include <DNSServer.h>
 #include <driver/i2s.h>
+#include <arduinoFFT.h>  // Add FFT library for proper frequency analysis
 
 // ============ CONFIGURATION ============
 IPAddress broadcastIP(255, 255, 255, 255);
@@ -28,8 +29,8 @@ const uint16_t audioSyncPort = 11988;
 
 // Audio settings
 #define SAMPLE_RATE 16000  // PDM mic works best at 16kHz
-#define SAMPLES 512
-#define SQUELCH 50         // Increased to filter noise - adjust higher if still noisy
+#define SAMPLES 256        // 256 samples for balanced latency and quality (~16ms)
+#define SQUELCH 100        // Increased from 80 - higher = more aggressive noise filtering
 
 // AGC Settings
 #define AGC_ENABLED_DEFAULT true
@@ -45,6 +46,11 @@ Preferences preferences;
 WebServer server(80);
 DNSServer dnsServer;
 WiFiUDP udp;
+TFT_eSprite sprite = TFT_eSprite(&M5.Lcd);  // Sprite to prevent flicker
+
+// Web UI state
+bool webUIActive = false;
+unsigned long lastWebUpdate = 0;
 
 bool transmitting = true;
 bool agcEnabled = AGC_ENABLED_DEFAULT;
@@ -61,6 +67,11 @@ uint8_t fftResult[16];
 uint8_t fftResultSmooth[16] = {0}; // Smoothed FFT for display
 uint8_t samplePeak = 0;
 
+// FFT arrays for proper frequency analysis
+double vReal[SAMPLES];
+double vImag[SAMPLES];
+ArduinoFFT<double> FFT = ArduinoFFT<double>(vReal, vImag, SAMPLES, SAMPLE_RATE);
+
 // AGC variables
 float currentGain = 30.0;
 float smoothedLevel = 0.0;
@@ -69,7 +80,12 @@ unsigned long agcUpdateTimer = 0;
 
 const float gainPresets[] = {20.0, 40.0, 60.0, 80.0, 100.0, 120.0, 140.0, 160.0, 180.0, 200.0};
 int currentGainIndex = 2;  // Start at 60
-uint8_t brightness = 15; // Backlight brightness (0-15) - changed to 15
+uint8_t brightness = 15; // Backlight brightness - useful range on M5StickC is 7-15
+
+// User-customizable presets (loaded from preferences)
+float userPreset1 = 50.0;
+float userPreset2 = 100.0;
+float userPreset3 = 150.0;
 
 // ============ WLED AUDIO SYNC PACKET ============
 // V2 Format for WLED 0.14.0+ (MoonModules)
@@ -158,6 +174,162 @@ const char success_html[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
+const char control_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>M5Stick Audio Control</title>
+    <style>
+        body { font-family: Arial; max-width: 600px; margin: 20px auto; padding: 20px; background: #1a1a1a; color: #fff; }
+        .container { background: #2a2a2a; padding: 20px; border-radius: 10px; }
+        h1 { color: #4CAF50; margin: 0 0 20px 0; }
+        .status { background: #333; padding: 10px; border-radius: 5px; margin-bottom: 20px; }
+        .control-group { margin: 20px 0; }
+        label { display: block; margin-bottom: 5px; color: #aaa; }
+        input[type="range"] { width: 100%; height: 8px; background: #444; border-radius: 5px; }
+        input[type="range"]::-webkit-slider-thumb { width: 20px; height: 20px; background: #4CAF50; border-radius: 50%; cursor: pointer; }
+        .value-display { font-size: 24px; color: #4CAF50; text-align: center; margin: 10px 0; }
+        .preset-buttons { display: flex; gap: 10px; margin: 20px 0; }
+        button { flex: 1; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; }
+        button:hover { background: #45a049; }
+        button.secondary { background: #666; }
+        button.secondary:hover { background: #777; }
+        .visualizer { background: #1a1a1a; height: 100px; margin: 20px 0; border-radius: 5px; padding: 10px; display: flex; align-items: flex-end; gap: 2px; }
+        .bar { flex: 1; background: linear-gradient(to top, #4CAF50, #8BC34A); min-height: 2px; border-radius: 2px 2px 0 0; transition: height 0.1s; }
+        .level-bar { height: 30px; background: #1a1a1a; border-radius: 5px; margin: 10px 0; position: relative; overflow: hidden; }
+        .level-fill { height: 100%; background: linear-gradient(to right, #4CAF50, #FFC107, #F44336); transition: width 0.1s; }
+        .agc-toggle { background: #666; }
+        .agc-toggle.active { background: #4CAF50; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>M5Stick Audio Control</h1>
+        
+        <div class="status">
+            <div>Status: <span id="status">Connected</span></div>
+            <div>Gain: <span id="currentGain">--</span>x</div>
+            <div>Mode: <span id="mode">--</span></div>
+            <div>Packets: <span id="packets">--</span></div>
+        </div>
+
+        <div class="control-group">
+            <label>Manual Gain (20-200)</label>
+            <input type="range" id="gainSlider" min="20" max="200" value="100" oninput="updateGain()">
+            <div class="value-display"><span id="gainValue">100</span>x</div>
+        </div>
+
+        <div class="control-group">
+            <label>Quick Presets</label>
+            <div class="preset-buttons">
+                <button onclick="setGain(userPreset1)">P1: <span id="p1val">50</span></button>
+                <button onclick="setGain(userPreset2)">P2: <span id="p2val">100</span></button>
+                <button onclick="setGain(userPreset3)">P3: <span id="p3val">150</span></button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>Audio Level</label>
+            <div class="level-bar">
+                <div class="level-fill" id="levelBar" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>Frequency Spectrum</label>
+            <div class="visualizer" id="spectrum"></div>
+        </div>
+
+        <div class="preset-buttons">
+            <button id="agcBtn" class="agc-toggle" onclick="toggleAGC()">AGC: OFF</button>
+            <button class="secondary" onclick="savePreset(1)">Save P1</button>
+            <button class="secondary" onclick="savePreset(2)">Save P2</button>
+            <button class="secondary" onclick="savePreset(3)">Save P3</button>
+        </div>
+    </div>
+
+    <script>
+        let userPreset1 = 50, userPreset2 = 100, userPreset3 = 150;
+        
+        // Create spectrum bars
+        const spectrum = document.getElementById('spectrum');
+        for(let i = 0; i < 14; i++) {
+            const bar = document.createElement('div');
+            bar.className = 'bar';
+            bar.style.height = '2px';
+            spectrum.appendChild(bar);
+        }
+
+        function updateGain() {
+            const val = document.getElementById('gainSlider').value;
+            document.getElementById('gainValue').textContent = val;
+            fetch('/api/gain?value=' + val);
+        }
+
+        function setGain(val) {
+            document.getElementById('gainSlider').value = val;
+            document.getElementById('gainValue').textContent = val;
+            fetch('/api/gain?value=' + val);
+        }
+
+        function toggleAGC() {
+            fetch('/api/agc').then(r => r.json()).then(d => {
+                document.getElementById('agcBtn').textContent = 'AGC: ' + (d.agc ? 'ON' : 'OFF');
+                document.getElementById('agcBtn').classList.toggle('active', d.agc);
+            });
+        }
+
+        function savePreset(num) {
+            const val = document.getElementById('gainSlider').value;
+            fetch('/api/preset?num=' + num + '&value=' + val).then(() => {
+                if(num == 1) { userPreset1 = val; document.getElementById('p1val').textContent = val; }
+                if(num == 2) { userPreset2 = val; document.getElementById('p2val').textContent = val; }
+                if(num == 3) { userPreset3 = val; document.getElementById('p3val').textContent = val; }
+            });
+        }
+
+        function updateStatus() {
+            fetch('/api/status').then(r => r.json()).then(d => {
+                document.getElementById('currentGain').textContent = d.gain.toFixed(1);
+                document.getElementById('mode').textContent = d.agc ? 'AGC' : 'Manual';
+                document.getElementById('packets').textContent = d.packets;
+                document.getElementById('levelBar').style.width = ((d.level / 255) * 100) + '%';
+                
+                // Update spectrum
+                const bars = spectrum.children;
+                for(let i = 0; i < 14 && i < d.fft.length; i++) {
+                    bars[i].style.height = ((d.fft[i] / 255) * 100) + '%';
+                }
+                
+                // Update AGC button
+                document.getElementById('agcBtn').textContent = 'AGC: ' + (d.agc ? 'ON' : 'OFF');
+                document.getElementById('agcBtn').classList.toggle('active', d.agc);
+                
+                // Update slider if in manual mode
+                if(!d.agc) {
+                    document.getElementById('gainSlider').value = d.gain;
+                    document.getElementById('gainValue').textContent = d.gain.toFixed(0);
+                }
+            }).catch(() => document.getElementById('status').textContent = 'Disconnected');
+        }
+
+        // Load presets on start
+        fetch('/api/presets').then(r => r.json()).then(d => {
+            userPreset1 = d.p1; userPreset2 = d.p2; userPreset3 = d.p3;
+            document.getElementById('p1val').textContent = d.p1;
+            document.getElementById('p2val').textContent = d.p2;
+            document.getElementById('p3val').textContent = d.p3;
+        });
+
+        // Update every 100ms
+        setInterval(updateStatus, 100);
+        updateStatus();
+    </script>
+</body>
+</html>
+)rawliteral";
+
 // ============ SETUP I2S FOR SPM1423 PDM MIC ============
 void setupPDMMicrophone() {
     i2s_config_t i2s_config = {
@@ -167,8 +339,11 @@ void setupPDMMicrophone() {
         .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT,
         .communication_format = I2S_COMM_FORMAT_STAND_I2S,
         .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-        .dma_buf_count = 2,
-        .dma_buf_len = 128,
+        .dma_buf_count = 4,          // Increased from 2
+        .dma_buf_len = 256,          // Increased from 128
+        .use_apll = false,
+        .tx_desc_auto_clear = false,
+        .fixed_mclk = 0
     };
 
     i2s_pin_config_t pin_config = {
@@ -180,9 +355,11 @@ void setupPDMMicrophone() {
 
     i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
     i2s_set_pin(I2S_PORT, &pin_config);
-    i2s_set_clk(I2S_PORT, SAMPLE_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
     
-    Serial.println("PDM Microphone initialized");
+    // Critical: Set PDM RX downsample mode
+    i2s_set_pdm_rx_down_sample(I2S_PORT, I2S_PDM_DSR_8S);
+    
+    Serial.println("PDM Microphone initialized with proper decimation");
 }
 
 // ============ SETUP ============
@@ -200,7 +377,13 @@ void setup() {
     // When USB disconnected: runs from battery
     // No additional code needed for battery operation
     
-    M5.Lcd.setRotation(1);
+    // Setup display - Portrait orientation (80 wide x 160 tall)
+    M5.Lcd.setRotation(0);  // Portrait mode: 80 wide x 160 tall
+    M5.Lcd.fillScreen(TFT_BLACK);
+    
+    // Create sprite buffer to prevent flicker (80x160)
+    sprite.createSprite(80, 160);
+    sprite.setSwapBytes(false);
     M5.Lcd.fillScreen(TFT_BLACK);
     M5.Lcd.setTextSize(2);
     
@@ -241,8 +424,33 @@ void setup() {
             M5.Lcd.print("IP: ");
             M5.Lcd.println(WiFi.localIP());
             M5.Lcd.println("\nMicrophone: PDM");
-            M5.Lcd.println("Starting audio...");
+            M5.Lcd.println("Web UI: http://");
+            M5.Lcd.println(WiFi.localIP());
+            
             udp.begin(audioSyncPort);
+            
+            // Load user presets
+            preferences.begin("audio-sync", false);
+            userPreset1 = preferences.getFloat("preset1", 50.0);
+            userPreset2 = preferences.getFloat("preset2", 100.0);
+            userPreset3 = preferences.getFloat("preset3", 150.0);
+            currentGain = preferences.getFloat("gain", 100.0);
+            agcEnabled = preferences.getBool("agc", AGC_ENABLED_DEFAULT);
+            brightness = preferences.getUChar("brightness", 15);
+            preferences.end();
+            
+            // Apply loaded brightness
+            M5.Axp.ScreenBreath(brightness);
+            
+            // Setup web control server
+            server.on("/", handleControl);
+            server.on("/api/status", handleStatus);
+            server.on("/api/gain", handleGain);
+            server.on("/api/agc", handleAGC);
+            server.on("/api/preset", handlePresetSave);
+            server.on("/api/presets", handlePresets);
+            server.begin();
+            
             apMode = false;
             delay(3000);
         } else {
@@ -313,6 +521,86 @@ void handleSave() {
     }
 }
 
+void handleControl() {
+    server.send(200, "text/html", control_html);
+}
+
+void handleStatus() {
+    String json = "{";
+    json += "\"gain\":" + String(currentGain, 1) + ",";
+    json += "\"agc\":" + String(agcEnabled ? "true" : "false") + ",";
+    json += "\"packets\":" + String(packetCount) + ",";
+    json += "\"level\":" + String(samplePeak) + ",";
+    json += "\"fft\":[";
+    for (int i = 0; i < 14; i++) {
+        json += String(fftResultSmooth[i]);
+        if (i < 13) json += ",";
+    }
+    json += "]}";
+    server.send(200, "application/json", json);
+}
+
+void handleGain() {
+    if (server.hasArg("value")) {
+        float newGain = server.arg("value").toFloat();
+        newGain = constrain(newGain, 20.0, 200.0);
+        currentGain = newGain;
+        agcEnabled = false;
+        // Save to preferences
+        preferences.begin("audio-sync", false);
+        preferences.putFloat("gain", currentGain);
+        preferences.putBool("agc", false);
+        preferences.end();
+        server.send(200, "application/json", "{\"ok\":true}");
+    } else {
+        server.send(400, "application/json", "{\"error\":\"missing value\"}");
+    }
+}
+
+void handleAGC() {
+    agcEnabled = !agcEnabled;
+    // Save AGC state
+    preferences.begin("audio-sync", false);
+    preferences.putBool("agc", agcEnabled);
+    preferences.end();
+    String json = "{\"agc\":" + String(agcEnabled ? "true" : "false") + "}";
+    server.send(200, "application/json", json);
+}
+
+void handlePresetSave() {
+    if (server.hasArg("num") && server.hasArg("value")) {
+        int num = server.arg("num").toInt();
+        float value = server.arg("value").toFloat();
+        value = constrain(value, 20.0, 200.0);
+        
+        preferences.begin("audio-sync", false);
+        if (num == 1) {
+            userPreset1 = value;
+            preferences.putFloat("preset1", value);
+        } else if (num == 2) {
+            userPreset2 = value;
+            preferences.putFloat("preset2", value);
+        } else if (num == 3) {
+            userPreset3 = value;
+            preferences.putFloat("preset3", value);
+        }
+        preferences.end();
+        
+        server.send(200, "application/json", "{\"ok\":true}");
+    } else {
+        server.send(400, "application/json", "{\"error\":\"missing parameters\"}");
+    }
+}
+
+void handlePresets() {
+    String json = "{";
+    json += "\"p1\":" + String(userPreset1, 0) + ",";
+    json += "\"p2\":" + String(userPreset2, 0) + ",";
+    json += "\"p3\":" + String(userPreset3, 0);
+    json += "}";
+    server.send(200, "application/json", json);
+}
+
 // ============ MAIN LOOP ============
 void loop() {
     M5.update();
@@ -368,6 +656,11 @@ void loop() {
                 currentGain = gainPresets[currentGainIndex];
             }
         }
+        // Save gain and AGC state
+        preferences.begin("audio-sync", false);
+        preferences.putFloat("gain", currentGain);
+        preferences.putBool("agc", agcEnabled);
+        preferences.end();
         updateDisplay();
     }
     
@@ -377,15 +670,25 @@ void loop() {
         if (btnBHoldTime == 0) {
             btnBHoldTime = millis();
         } else if (millis() - btnBHoldTime > 1000) {
-            brightness += 3;
-            if (brightness > 15) brightness = 3;
+            // Cycle through useful brightness range: 8, 10, 12, 15
+            if (brightness < 10) brightness = 10;
+            else if (brightness < 12) brightness = 12;
+            else if (brightness < 15) brightness = 15;
+            else brightness = 8;  // Back to minimum visible
+            
             M5.Axp.ScreenBreath(brightness);
+            
+            // Save brightness to preferences
+            preferences.begin("audio-sync", false);
+            preferences.putUChar("brightness", brightness);
+            preferences.end();
+            
             M5.Lcd.fillScreen(TFT_BLACK);
             M5.Lcd.setTextSize(3);
-            M5.Lcd.setCursor(20, 40);
+            M5.Lcd.setCursor(10, 40);
             M5.Lcd.printf("Bright\n  %d/15", brightness);
             delay(500);
-            btnBHoldTime = millis(); // Reset for continuous adjustment
+            btnBHoldTime = millis();
             updateDisplay();
         }
     } else {
@@ -393,14 +696,22 @@ void loop() {
     }
     
     if (transmitting && WiFi.status() == WL_CONNECTED) {
+        server.handleClient();  // Handle web requests
+        
         captureAudio();
         processAudioWithAGC();
+        calculateFrequencyBins();  // Calculate FFT every time for fresh data
         sendAudioSync();
         
+        // Update display less frequently
         if (millis() - lastUpdate > 100) {
             updateDisplay();
             lastUpdate = millis();
         }
+        
+        // Small delay for proper pacing - prevents UDP flooding
+        // This gives ~60 packets/second which is optimal for WLED
+        delay(15);
     } else if (WiFi.status() != WL_CONNECTED && !apMode) {
         M5.Lcd.fillScreen(TFT_BLACK);
         M5.Lcd.setTextSize(2);
@@ -408,8 +719,6 @@ void loop() {
         M5.Lcd.println("WiFi LOST!");
         delay(1000);
     }
-    
-    delay(10);
 }
 
 // ============ CAPTURE AUDIO FROM PDM MIC ============
@@ -483,43 +792,129 @@ void updateAGC(int16_t rawAmplitude) {
 }
 
 void calculateFrequencyBins() {
-    int binSize = SAMPLES / 16;
+    // Remove DC offset FIRST (critical for PDM mics!)
+    int32_t dcSum = 0;
+    for (int i = 0; i < SAMPLES; i++) {
+        dcSum += samples[i];
+    }
+    int16_t dcOffset = dcSum / SAMPLES;
     
-    for (int bin = 0; bin < 16; bin++) {
-        int32_t binSum = 0;
-        int32_t binMax = 0;
+    // Copy samples to FFT with DC removal
+    for (int i = 0; i < SAMPLES; i++) {
+        vReal[i] = (double)(samples[i] - dcOffset);
+        vImag[i] = 0.0;
+    }
+    
+    // Perform FFT
+    FFT.windowing(FFTWindow::Hamming, FFTDirection::Forward);
+    FFT.compute(FFTDirection::Forward);
+    FFT.complexToMagnitude();
+    
+    // LOW-PASS FILTER: Zero out everything above 6kHz (bin 96 for 256 samples)
+    // This eliminates harmonics and distortion products
+    for (int i = 96; i < 128; i++) {
+        vReal[i] = 0;
+    }
+    
+    // Debug counter
+    static int debugCount = 0;
+    debugCount++;
+    bool shouldDebug = (debugCount % 50 == 0);
+    
+    if (shouldDebug) {
+        double peakFreq = FFT.majorPeak();
+        Serial.printf("\nDominant: %.0f Hz\n", peakFreq);
+    }
+    
+    // UPDATED frequency bands for 256 SAMPLES (128 FFT bins)
+    // Freq per bin = 16000/256 = 62.5 Hz
+    // Bar 0: ~50-100Hz, Bar 1: ~100-200Hz, rest evenly distributed
+    
+    const int barBins[16][2] = {
+        {1, 2},       // Bar 0: 62-125 Hz
+        {2, 3},       // Bar 1: 125-188 Hz
+        {3, 5},       // Bar 2: 188-312 Hz
+        {5, 7},       // Bar 3: 312-438 Hz
+        {7, 10},      // Bar 4: 438-625 Hz
+        {10, 14},     // Bar 5: 625-875 Hz
+        {14, 18},     // Bar 6: 875-1125 Hz
+        {18, 24},     // Bar 7: 1125-1500 Hz
+        {24, 31},     // Bar 8: 1500-1938 Hz
+        {31, 39},     // Bar 9: 1938-2438 Hz
+        {39, 50},     // Bar 10: 2438-3125 Hz
+        {50, 63},     // Bar 11: 3125-3938 Hz
+        {63, 79},     // Bar 12: 3938-4938 Hz
+        {79, 96},     // Bar 13: 4938-6000 Hz
+        {96, 96},     // Bar 14: DISABLED (above 6kHz)
+        {96, 96}      // Bar 15: DISABLED (above 6kHz)
+    };
+    
+    if (shouldDebug) {
+        Serial.print("Bars: ");
+    }
+    
+    // Calculate each bar
+    for (int bar = 0; bar < 16; bar++) {
+        int binStart = barBins[bar][0];
+        int binEnd = barBins[bar][1];
         
-        for (int i = 0; i < binSize; i++) {
-            int idx = bin * binSize + i;
-            int16_t val = abs(samples[idx]);
-            binSum += val;
-            if (val > binMax) binMax = val;
+        double maxVal = 0;
+        
+        for (int bin = binStart; bin < binEnd; bin++) {
+            if (vReal[bin] > maxVal) {
+                maxVal = vReal[bin];
+            }
         }
         
-        // Use peak value primarily for better visualization
-        int32_t binValue = binMax / 64;
+        // Scale
+        int32_t scaled = (int32_t)(maxVal / 1000.0);
         
-        // Apply noise gate - values below SQUELCH are zeroed
-        if (binValue < SQUELCH / 2) {
-            binValue = 0;
+        // Noise gate
+        if (scaled < SQUELCH / 2) {
+            scaled = 0;
         } else {
-            // Subtract noise floor from signal
-            binValue -= (SQUELCH / 2);
+            scaled -= (SQUELCH / 2);
         }
         
-        fftResult[bin] = constrain(binValue, 0, 255);
+        fftResult[bar] = constrain(scaled, 0, 255);
         
-        // Smooth for display (fast attack, slow decay)
-        if (fftResult[bin] > fftResultSmooth[bin]) {
-            fftResultSmooth[bin] = fftResult[bin]; // Fast attack
+        if (shouldDebug) {
+            Serial.printf("%3d ", fftResult[bar]);
+        }
+        
+        // Smooth
+        if (fftResult[bar] > fftResultSmooth[bar]) {
+            fftResultSmooth[bar] = fftResult[bar];
         } else {
-            fftResultSmooth[bin] = (fftResultSmooth[bin] * 7 + fftResult[bin]) / 8; // Slow decay
+            fftResultSmooth[bar] = (fftResultSmooth[bar] * 7 + fftResult[bar]) / 8;
         }
+    }
+    
+    if (shouldDebug) {
+        Serial.println();
     }
 }
 
 void sendAudioSync() {
     AudioSyncPacket packet;
+    
+    // NOISE GATE: Don't send anything if audio level is too low
+    if (samplePeak < SQUELCH) {
+        // Send zeros to WLED (silence)
+        packet.sampleRaw = 0.0;
+        packet.sampleSmth = 0.0;
+        packet.samplePeak = 0;
+        memset(packet.fftResult, 0, 16);
+        packet.FFT_Magnitude = 0.0;
+        packet.FFT_MajorPeak = 0.0;
+        
+        udp.beginPacket(broadcastIP, audioSyncPort);
+        udp.write((uint8_t*)&packet, sizeof(packet));
+        udp.endPacket();
+        
+        packetCount++;
+        return;
+    }
     
     static uint8_t smoothBuffer[4] = {0};
     static uint8_t smoothIndex = 0;
@@ -537,24 +932,33 @@ void sendAudioSync() {
     packet.sampleSmth = (float)(smoothSum / 4);
     packet.samplePeak = samplePeak;
     
-    // Copy FFT results
-    memcpy(packet.fftResult, fftResult, 16);
+    // Copy FFT results (calculated less frequently now)
+    // Apply additional noise gate to frequency bins
+    for (int i = 0; i < 16; i++) {
+        if (fftResult[i] < SQUELCH / 4) {
+            packet.fftResult[i] = 0;
+        } else {
+            packet.fftResult[i] = fftResult[i];
+        }
+    }
     
-    // Calculate FFT magnitude and major peak
+    // Simple FFT stats (don't recalculate, use cached fftResult)
     packet.FFT_Magnitude = 0.0;
     packet.FFT_MajorPeak = 0.0;
     uint8_t maxBin = 0;
+    int maxBinIndex = 0;
     
     for (int i = 0; i < 16; i++) {
-        if (fftResult[i] > maxBin) {
-            maxBin = fftResult[i];
-            packet.FFT_MajorPeak = i * (SAMPLE_RATE / 2.0 / 16.0); // Approximate frequency
+        if (packet.fftResult[i] > maxBin) {
+            maxBin = packet.fftResult[i];
+            maxBinIndex = i;
         }
-        packet.FFT_Magnitude += fftResult[i];
+        packet.FFT_Magnitude += packet.fftResult[i];
     }
-    packet.FFT_Magnitude /= 16.0; // Average magnitude
+    packet.FFT_MajorPeak = maxBinIndex * (SAMPLE_RATE / 2.0 / 16.0);
+    packet.FFT_Magnitude /= 16.0;
     
-    // Send packet
+    // Send packet - this is now FAST!
     udp.beginPacket(broadcastIP, audioSyncPort);
     udp.write((uint8_t*)&packet, sizeof(packet));
     udp.endPacket();
@@ -564,81 +968,79 @@ void sendAudioSync() {
 
 // ============ DISPLAY UPDATE ============
 void updateDisplay() {
-    // M5StickC (original) display: 80 pixels wide x 160 pixels tall in rotation 1
-    M5.Lcd.fillScreen(TFT_BLACK);
-    M5.Lcd.setTextSize(1);
-    M5.Lcd.setCursor(0, 0);
+    // M5StickC display in portrait: 80 pixels wide x 160 pixels tall
+    // Draw to sprite first (prevents flicker), then push to screen
     
-    // Line 1: Status
-    M5.Lcd.setTextColor(transmitting ? TFT_GREEN : TFT_RED);
-    M5.Lcd.println(transmitting ? "TX" : "OFF");
+    sprite.fillSprite(TFT_BLACK);
+    sprite.setTextSize(1);
+    sprite.setTextDatum(TL_DATUM);
     
-    // Line 2: IP (abbreviated)
-    M5.Lcd.setTextColor(TFT_WHITE);
+    // Add 2 pixel margins on left and top
+    int marginLeft = 2;
+    int marginTop = 2;
+    
+    // Top section: Status info
+    sprite.setCursor(marginLeft, marginTop);
+    sprite.setTextColor(transmitting ? TFT_GREEN : TFT_RED);
+    sprite.print(transmitting ? "TX " : "OFF");
+    
+    sprite.setTextColor(TFT_WHITE);
     String ip = WiFi.localIP().toString();
-    // Show last octet only to save space
     int lastDot = ip.lastIndexOf('.');
-    M5.Lcd.print(".");
-    M5.Lcd.println(ip.substring(lastDot + 1));
+    sprite.print(".");
+    sprite.println(ip.substring(lastDot + 1));
     
-    // Line 3: Gain
+    // Gain info
+    sprite.setCursor(marginLeft, marginTop + 10);
     if (agcEnabled) {
-        M5.Lcd.setTextColor(TFT_GREEN);
-        M5.Lcd.printf("AGC %.0f\n", currentGain);
+        sprite.setTextColor(TFT_GREEN);
+        sprite.printf("AGC:%.0f\n", currentGain);
     } else {
-        M5.Lcd.setTextColor(TFT_YELLOW);
-        M5.Lcd.printf("MAN %.0f\n", currentGain);
+        sprite.setTextColor(TFT_YELLOW);
+        sprite.printf("MAN:%.0f\n", currentGain);
     }
     
-    // Line 4: Packet count (abbreviated)
-    M5.Lcd.setTextColor(TFT_WHITE);
-    if (packetCount < 10000) {
-        M5.Lcd.printf("Pkt %lu\n", packetCount);
-    } else {
-        M5.Lcd.printf("Pkt %luk\n", packetCount / 1000);
-    }
+    sprite.setCursor(marginLeft, marginTop + 18);
+    sprite.setTextColor(TFT_WHITE);
+    sprite.printf("Pkt:%lu", packetCount);
     
-    // Audio level bar at y=32, compact
-    M5.Lcd.setCursor(0, 32);
-    M5.Lcd.println("Lvl");
-    int barWidth = (samplePeak * 78) / 255;  // 78 pixels wide (80-2 for margins)
-    
+    // Audio level bar (horizontal, thicker - 12 pixels tall instead of 6)
+    int barY = marginTop + 28;
+    int barWidth = (samplePeak * 74) / 255;  // 74 pixels (80 - 2 margins - 4 padding)
     uint16_t barColor;
     if (samplePeak < 85) barColor = TFT_GREEN;
     else if (samplePeak < 200) barColor = TFT_YELLOW;
     else barColor = TFT_RED;
     
-    M5.Lcd.fillRect(1, 42, barWidth, 6, barColor);
-    M5.Lcd.drawRect(1, 42, 78, 6, TFT_WHITE);
+    sprite.fillRect(marginLeft + 1, barY, barWidth, 12, barColor);
+    sprite.drawRect(marginLeft + 1, barY, 74, 12, TFT_WHITE);
     
     if (agcEnabled) {
-        int targetX = 1 + (AGC_TARGET_LEVEL * 78) / 255;
-        M5.Lcd.drawFastVLine(targetX, 41, 8, TFT_BLUE);
+        int targetX = marginLeft + 1 + (AGC_TARGET_LEVEL * 74) / 255;
+        sprite.drawFastVLine(targetX, barY - 1, 14, TFT_BLUE);
     }
     
-    // Frequency visualization at y=50
-    M5.Lcd.setCursor(0, 50);
-    M5.Lcd.println("Freq");
+    // Frequency visualizer - starts at y=45, reduced height
+    sprite.setCursor(marginLeft, 44);
+    sprite.setTextColor(TFT_CYAN);
+    sprite.println("FREQ");
     
-    // Draw 8 frequency bars (not 16, too narrow for 80px screen)
-    // Each bar is 9 pixels wide (8 bars * 10 = 80)
-    for (int i = 0; i < 8; i++) {
-        // Combine pairs of frequency bins for 8 bars instead of 16
-        int bin1 = fftResultSmooth[i * 2];
-        int bin2 = fftResultSmooth[i * 2 + 1];
-        int avgBin = (bin1 + bin2) / 2;
+    // 16 frequency bars, 95 pixels tall max (reduced from 105)
+    // Bars start at x=0 (full width, bass on left, treble on right)
+    for (int i = 0; i < 16; i++) {
+        // Reduce boost from 15x to 5x since FFT is already sensitive
+        int boostedValue = min(255, fftResultSmooth[i] * 5);
+        int barHeight = (boostedValue * 95) / 255;  // Reduced from 105 to 95
+        int x = i * 5;
         
-        // Boost and scale
-        int boostedValue = min(255, avgBin * 10);
-        int barHeight = (boostedValue * 95) / 255;  // Max 95 pixels tall (160 - 60 header = 100)
-        int x = i * 10;
-        
-        // Draw from y=157 upward (screen is 160 tall)
-        if (barHeight > 2) {
-            M5.Lcd.fillRect(x, 157 - barHeight, 9, barHeight, TFT_CYAN);
+        if (barHeight > 1) {
+            sprite.fillRect(x, 157 - barHeight, 4, barHeight, TFT_CYAN);
         }
     }
     
-    // Draw baseline at bottom
-    M5.Lcd.drawFastHLine(0, 157, 80, TFT_WHITE);
+    // Baseline for freq bars
+    sprite.drawFastHLine(0, 157, 80, TFT_WHITE);
+    
+    // Push sprite to LCD (single operation, no flicker!)
+    sprite.pushSprite(0, 0);
 }

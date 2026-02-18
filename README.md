@@ -14,7 +14,7 @@ The code has been fully generated with Claude AI and has been tested for bugs.
 
 ## Requirements
 
-- **M5StickC ** 
+- **M5StickC** 
 - **WLED Device** 
 - **WiFi Network** - 2.4GHz 
 

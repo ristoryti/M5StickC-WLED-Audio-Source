@@ -5,6 +5,11 @@ This firmware is built for the original M5StickC, and has not been tested with M
 
 The code has been fully generated with Claude AI and has been tested for bugs.
 
+<img src="https://github.com/user-attachments/assets/52ce8a2b-ef86-40ea-ad74-d7d726afc629" width="307">
+<img src="https://github.com/user-attachments/assets/8d1cc81c-c5b0-4068-9801-1dd906fe38f4" width="400">  
+
+M5StickC display and webUI control
+
 ## Features
 
 **WiFi Configuration Portal** - Input wifi credentials in browser  
@@ -239,6 +244,7 @@ IPAddress broadcastIP(192, 168, 1, 100);
 
 Issues:
 - The display can't be used at full brightness and the brightness presets don't work
-- The visual eq has som issues on higher frequencies, I tried to fix these but some wrong frequencies are still displayed
+- The visual eq has some issues on higher frequencies, I tried to fix this but some wrong frequencies are still displayed
 - The battery is not working, maybe an issue with my unit?
 - Maybe Squelch and AGC parameters could be added to webui? Maybe even sample rate changes?
+- A higher gain setting could be added (300 or 400 max gain)

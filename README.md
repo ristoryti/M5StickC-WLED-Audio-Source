@@ -43,6 +43,7 @@ M5StickC display and webUI control
 8. **Connect M5StickC**
    - Connect via USB-C cable
    - Select board: ESP32 Dev Module
+   - Click the icon in the top with three sliders, and change the upload speed to 115200 and flash mode to DIO
 
 7. **Copy the Firmware**
    - Copy the entire contents of `M5StickC_WLED_Audio.ino`

@@ -213,7 +213,7 @@ Higher = more agressive filtering
 
 ### Adjusting latency
 - To adjust latency you need to change sample size in code and also update the FFT array sizes. The default sample size is 256 samples and theoretically it cause around 16ms of latency (with 16khz)
-- In practice, there are many factors that are affecting latency and i was able to test around 150ms of latency.
+- In practice, there are many factors that are affecting latency and I was able to test around 150ms of latency. This was achieved using only wireless connections, and using WLED via ethernet might reduce the latency slightly.
 
 **Presets:**
 - **Live Music**: Target 200, Attack 0.1, Decay 0.005

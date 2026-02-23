@@ -1,7 +1,6 @@
 # M5StickC - WLED Audio Sync Source
 
 This firmware for M5StickC uses the built-in SPM1423 PDM microphone to capture audio and sends it to WLED-enabled ESP devices via UDP for synchronized audio-reactive lighting effects.  
-This firmware is built for the original M5StickC, and has not been tested with M5StickC Plus nor Plus v2
 
 The code has been fully generated with Claude AI and has been tested for bugs.
 
@@ -22,6 +21,8 @@ M5StickC display and webUI control
 - **M5StickC** 
 - **WLED Device** 
 - **WiFi Network** - 2.4GHz 
+
+This firmware is built for the original M5StickC, and has not been tested with M5StickC Plus nor Plus v2. Changing the included library in the first lines of the code from M5StickC to M5StickCplus *might* make it work, but the display scaling will be off. 
 
 ## Installation
 

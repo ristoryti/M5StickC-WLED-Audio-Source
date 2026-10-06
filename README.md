@@ -5,8 +5,9 @@ This firmware is built for the original M5StickC, and has not been tested with M
 
 The code has been fully generated with Claude AI and has been tested for bugs.
 
-<img src="https://github.com/user-attachments/assets/52ce8a2b-ef86-40ea-ad74-d7d726afc629" width="307">
-<img src="https://github.com/user-attachments/assets/8d1cc81c-c5b0-4068-9801-1dd906fe38f4" width="400">  
+<img src="https://github.com/user-attachments/assets/b445bcca-62a8-46df-abb7-a708c6433ab1" width="307">
+<img src="https://github.com/user-attachments/assets/a961d183-6935-44a7-8224-815a8505f5a8" width="400">  
+
 
 M5StickC display and webUI control
 
